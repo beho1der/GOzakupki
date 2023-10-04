@@ -469,18 +469,17 @@ func (z *Zakupka) GetCommonInfo(id string) {
 								}
 							}
 						}
-					} else {
+					}
+					if subWorker.FullnameEmpty() {
 						strArray := strings.Split(tdSubWorkers.Text(), "\n")
 						for _, value := range strArray {
 							row := strings.ReplaceAll(value, "  ", "")
-
 							if len(row) > 0 {
 								subWorker.FullName, subWorker.ShortName = getFullNameAndShortName(row)
 								break
 							}
 						}
 					}
-					//subWorker.FullName = strings.Trim(strArray[0], " ")
 					var indexInn, indexKpp, indexOkpo, indexDateRegister int
 					tdSubWorkers.Find("span").Each(func(indexspan int, spanSubWorkers *goquery.Selection) {
 						if strings.Contains(spanSubWorkers.Text(), "ИНН") {
@@ -743,4 +742,11 @@ func getFullNameAndShortName(s string) (fullName, shortName string) {
 	}
 	fullName = s
 	return
+}
+
+func (s *SubWorker) FullnameEmpty() bool {
+	if s.FullName == "" {
+		return true
+	}
+	return false
 }
