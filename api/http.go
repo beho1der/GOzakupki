@@ -197,10 +197,7 @@ func GetDocumentInfo(id string, inc int) ([]Document, error) {
 			}
 			if check.Length() >= 5 {
 				rowtr.Find("td").EachWithBreak(func(indextd int, rowtd *goquery.Selection) bool {
-					/*				ftd := rowtd.Find("span.section__title")
-									if ftd.Length() == 0 && indextd == 1 {
-										return false
-									}*/
+
 					indextd = indextd + correct
 					switch indextd {
 					case 0:
@@ -534,7 +531,7 @@ func (z *Zakupka) GetCommonInfo(id string) {
 							row = phoneArray[0]
 						}
 						if len(row) > 0 {
-							if strings.Contains(row, "@") {
+							if strings.Contains(row, "@") || strings.Contains(row, ".") {
 								subWorker.Email = strings.Trim(row, " ")
 							} else {
 								row = strings.ReplaceAll(row, "-", "")
@@ -711,12 +708,21 @@ func YearToInt(origin string) int64 {
 }
 
 func PhoneNumberToInternationFormat(s string) (string, bool) {
+
+	s = ParseNum(s) // выделяем цифры
 	var number = []rune(s)
 	if len(number) == 0 {
 		return s, false
 	}
+	if len(number) == 10 {
+		number = append([]rune("7"), number...)
+		number = append([]rune("+"), number...)
+	}
 	if len(number) == 11 && number[0] == rune('8') {
 		number[0] = rune('7')
+		number = append([]rune("+"), number...)
+	}
+	if len(number) == 11 && number[0] != rune('+') && number[0] == rune('7') {
 		number = append([]rune("+"), number...)
 	}
 	return string(number), true
@@ -749,4 +755,23 @@ func (s *SubWorker) FullnameEmpty() bool {
 		return true
 	}
 	return false
+}
+
+func ParseNum(s string) (str string) {
+	nLen := 0
+	for i := 0; i < len(s); i++ {
+		if b := s[i]; '0' <= b && b <= '9' {
+			nLen++
+		}
+	}
+	var n = make([]int, 0, nLen)
+	for i := 0; i < len(s); i++ {
+		if b := s[i]; '0' <= b && b <= '9' {
+			n = append(n, int(b)-'0')
+		}
+	}
+	for _, value := range n {
+		str = str + strconv.Itoa(value)
+	}
+	return
 }
