@@ -41,6 +41,9 @@ type Zakupka struct {
 	Customer                   Customer          `json:"customer,omitempty"`
 	log                        *logrus.Logger    `json:"-"`
 	Error                      string            `json:"error"`
+	client                     *http.Client      `json:"-"`
+	repeatCount                int               `json:"-"`
+	timeout                    int               `json:"-"`
 }
 
 type Customer struct {
@@ -126,35 +129,40 @@ func (t *MyTime) MarshalJSON() ([]byte, error) {
 
 var replaceArray = []string{"«Дополнительное соглашение к контракту»", "  ", "\n", "№", "₽", " ", "<br>"}
 var replacerPhone = []string{"--", ")", "(", "  "}
-var client = &http.Client{
-	Transport: tr,
-	Timeout:   10 * time.Second,
-}
-
-var backoffSchedule = []time.Duration{
-	1 * time.Second,
-	3 * time.Second,
-	10 * time.Second,
-}
 
 var tr = &http.Transport{
 	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 }
 
-func New(l *logrus.Logger) *Zakupka {
+func New(l *logrus.Logger, timeout, repeat int) *Zakupka {
+
+	if timeout == 0 {
+		timeout = 30
+	}
+
 	return &Zakupka{
-		log:       l,
-		SumByYear: make(map[int64]float64),
+		log:         l,
+		SumByYear:   make(map[int64]float64),
+		timeout:     timeout,
+		repeatCount: repeat,
+		client:      generateHttpClientWithTimeout(timeout),
+	}
+}
+
+func generateHttpClientWithTimeout(timeout int) *http.Client {
+	return &http.Client{
+		Transport: tr,
+		Timeout:   time.Duration(timeout) * time.Second,
 	}
 }
 
 // повтор запросов если не обработались с первого раза
-func requestRepeat(req *http.Request, id string) (resp *http.Response, err error) {
-	for _, backoff := range backoffSchedule {
-		resp, err = client.Do(req)
+func (z *Zakupka) requestRepeat(req *http.Request, id string) (resp *http.Response, err error) {
+	for i := 0; i < z.repeatCount; i++ {
+		resp, err = z.client.Do(req)
 		if err != nil {
 			err = fmt.Errorf("запрос данных закупки по ID: %s : %s", id, err)
-			time.Sleep(backoff)
+			time.Sleep(time.Duration(z.timeout))
 			continue
 		}
 		// Read response
@@ -162,7 +170,7 @@ func requestRepeat(req *http.Request, id string) (resp *http.Response, err error
 		//e.log.Info(string(data_b))
 		if resp.StatusCode != 200 {
 			err = fmt.Errorf("статус выполнения запроса: %d код ошибки %s", resp.StatusCode, resp.Status)
-			time.Sleep(backoff)
+			time.Sleep(time.Duration(z.timeout))
 			continue
 		}
 		break
@@ -171,14 +179,14 @@ func requestRepeat(req *http.Request, id string) (resp *http.Response, err error
 	return resp, err
 }
 
-func GetDocumentInfo(id string, inc int) ([]Document, error) {
+func (z *Zakupka) GetDocumentInfo(id string, inc int) ([]Document, error) {
 	var documents []Document
 	r := regexp.MustCompile("\\s+")
 	url := "https://zakupki.gov.ru" + id + "&itemIndex=" + strconv.Itoa(inc*50) + "&pageSize=50"
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := requestRepeat(req, id)
+	resp, err := z.requestRepeat(req, id)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +241,7 @@ func (z *Zakupka) GetProcessInfo(id string) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := requestRepeat(req, id)
+	resp, err := z.requestRepeat(req, id)
 	if err != nil {
 		z.saveError(err)
 		return
@@ -334,7 +342,7 @@ func (z *Zakupka) GetProcessInfo(id string) {
 		for key, value := range stages {
 			for i := 0; i < 40; i++ {
 				if value.URL != nil {
-					document, err := GetDocumentInfo(*value.URL, i)
+					document, err := z.GetDocumentInfo(*value.URL, i)
 					if err != nil {
 						z.log.Error(err)
 						continue
@@ -370,7 +378,7 @@ func (z *Zakupka) GetCommonInfo(id string) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := requestRepeat(req, id)
+	resp, err := z.requestRepeat(req, id)
 	if err != nil {
 		z.saveError(err)
 		return
@@ -593,7 +601,7 @@ func (z *Zakupka) GetPaymentInfo(id string) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := requestRepeat(req, id)
+	resp, err := z.requestRepeat(req, id)
 	if err != nil {
 		z.saveError(err)
 		return

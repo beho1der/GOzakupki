@@ -8,7 +8,9 @@ import (
 )
 
 type MessageIn struct {
-	ID string `json:"id"`
+	ID          string `json:"id"`
+	Timeout     int    `json:"timeout"`
+	RepeatCount int    `json:"repeat"`
 }
 
 type Message struct {
@@ -22,13 +24,13 @@ func GetContractCard(log *logrus.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var msg MessageIn
 		w.Header().Set("Content-Type", "application/json")
-		var zakupka = New(log)
 		b, _ := ioutil.ReadAll(r.Body)
 		if err := json.Unmarshal(b, &msg); err != nil {
 			send, _ := json.Marshal(Message{Message: "не корректный json", Status: false})
 			w.Write(send)
 			return
 		}
+		var zakupka = New(log, msg.Timeout, msg.RepeatCount)
 		zakupka.RequestEpz(msg.ID)
 		if zakupka.Error != "" {
 			send, _ := json.Marshal(Message{Message: zakupka.Error, Status: false, Zakupka: zakupka})
