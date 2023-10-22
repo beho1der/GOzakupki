@@ -140,6 +140,10 @@ func New(l *logrus.Logger, timeout, repeat int) *Zakupka {
 		timeout = 30
 	}
 
+	if repeat == 0 {
+		repeat = 1
+	}
+
 	return &Zakupka{
 		log:         l,
 		SumByYear:   make(map[int64]float64),
@@ -235,6 +239,7 @@ func (z *Zakupka) GetDocumentInfo(id string, inc int) ([]Document, error) {
 
 func (z *Zakupka) GetProcessInfo(id string) {
 	defer z.Wg.Done()
+
 	var stages []Stage
 	var penaltyInfos []PenaltyInfo
 	url := "https://zakupki.gov.ru/epz/contract/contractCard/process-info.html?reestrNumber=" + id
@@ -246,6 +251,7 @@ func (z *Zakupka) GetProcessInfo(id string) {
 		z.saveError(err)
 		return
 	}
+	defer resp.Body.Close()
 	//data_b, err := ioutil.ReadAll(resp.Body)
 	//z.log.Info(string(data_b))
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
@@ -273,9 +279,9 @@ func (z *Zakupka) GetProcessInfo(id string) {
 						stageSplit := strings.Split(replacer(replaceArray, rowhtml.Next().Text()), "-")
 						if len(stageSplit) > 1 {
 							flag = true
-							ts, _ := convertTime(strings.Replace(stageSplit[0], " ", "", -1))
+							ts, _ := convertTime(ParseDate(stageSplit[0]))
 							stage.DateStart = MyTime{ts}
-							te, _ := convertTime(strings.Replace(stageSplit[1], " ", "", -1))
+							te, _ := convertTime(ParseDate(stageSplit[1]))
 							stage.DateEnd = MyTime{te}
 
 						}
@@ -782,4 +788,35 @@ func ParseNum(s string) (str string) {
 		str = str + strconv.Itoa(value)
 	}
 	return
+}
+
+func ParseDate(s string) (str string) {
+	var n string
+	var countStart int
+	var isStart bool
+
+	for i := 0; i < len(s); i++ {
+		if b := s[i]; '0' <= b && b <= '9' {
+			n = n + string(b)
+			countStart++
+		}
+		if s[i] == '.' {
+			n = n + string(s[i])
+		}
+		if countStart == 2 && s[i] == '.' && !isStart {
+			isStart = true
+		}
+		if countStart > 2 && !isStart {
+			n = ""
+			countStart = 0
+		}
+		if s[i] == '.' && countStart == 2 {
+			countStart = 0
+		}
+		if isStart && countStart > 3 {
+			return n
+		}
+	}
+
+	return n
 }
