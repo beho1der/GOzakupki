@@ -287,12 +287,12 @@ func (z *Zakupka) GetProcessInfo(id string) {
 						}
 						stageSplitFrom := strings.Split(replacer(replaceArray, rowhtml.Next().Text()), "По ")
 						if len(stageSplitFrom) > 1 && !flag {
-							ts, _ := convertTime(strings.Replace(stageSplitFrom[1], " ", "", -1))
+							ts, _ := convertTime(ParseDate(stageSplitFrom[1]))
 							stage.DateEnd = MyTime{ts}
 						}
 						stageSplitTo := strings.Split(replacer(replaceArray, rowhtml.Next().Text()), "От ")
 						if len(stageSplitTo) > 1 && !flag {
-							ts, _ := convertTime(strings.Replace(stageSplitTo[1], " ", "", -1))
+							ts, _ := convertTime(ParseDate(stageSplitTo[1]))
 							stage.DateStart = MyTime{ts}
 
 						}
