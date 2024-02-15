@@ -4,19 +4,21 @@ import (
 	"GOzakupki/api"
 	"GOzakupki/config"
 	"crypto/tls"
-	"github.com/gorilla/handlers"
-	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/gorilla/handlers"
+	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 )
 
-var conf = config.New()
-var log = logrus.New()
+var (
+	conf = config.New()
+	log  = logrus.New()
+)
 
 func init() {
-
 	log.SetFormatter(&logrus.TextFormatter{ // настройки логирования
 		FullTimestamp: true,
 	})
@@ -29,14 +31,15 @@ func init() {
 		if err != nil {
 			log.Errorf("не корректный адрес proxy:", err)
 		} else {
-			transport := &http.Transport{Proxy: http.ProxyURL(proxyURL),
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+			transport := &http.Transport{
+				Proxy:           http.ProxyURL(proxyURL),
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			}
 			clientReg.Transport = transport
 		}
 	}
 
-	log.Info("версия 0.5.1")
-
+	log.Info("версия 0.5.6")
 }
 
 func main() {

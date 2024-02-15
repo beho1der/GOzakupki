@@ -1,19 +1,20 @@
 package api
 
 import (
-	"github.com/PuerkitoBio/goquery"
-	"github.com/sirupsen/logrus"
-	//"io/ioutil"
-	//"fmt"
-	//"bytes"
 	"crypto/tls"
 	"fmt"
+	//"io/ioutil"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/sirupsen/logrus"
+	//"fmt"
+	//"bytes"
 )
 
 type MyTime struct {
@@ -127,15 +128,16 @@ func (t *MyTime) MarshalJSON() ([]byte, error) {
 	return
 }*/
 
-var replaceArray = []string{"«Дополнительное соглашение к контракту»", "  ", "\n", "№", "₽", " ", "<br>"}
-var replacerPhone = []string{"--", ")", "(", "  "}
+var (
+	replaceArray  = []string{"«Дополнительное соглашение к контракту»", "  ", "\n", "№", "₽", " ", "<br>"}
+	replacerPhone = []string{"--", ")", "(", "  "}
+)
 
 var tr = &http.Transport{
 	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 }
 
 func New(l *logrus.Logger, timeout, repeat int) *Zakupka {
-
 	if timeout == 0 {
 		timeout = 30
 	}
@@ -170,8 +172,8 @@ func (z *Zakupka) requestRepeat(req *http.Request, id string) (resp *http.Respon
 			continue
 		}
 		// Read response
-		//data_b, err := ioutil.ReadAll(resp.Body)
-		//e.log.Info(string(data_b))
+		// data_b, err := ioutil.ReadAll(resp.Body)
+		// e.log.Info(string(data_b))
 		if resp.StatusCode != 200 {
 			err = fmt.Errorf("статус выполнения запроса: %d код ошибки %s", resp.StatusCode, resp.Status)
 			time.Sleep(time.Duration(z.timeout))
@@ -209,7 +211,6 @@ func (z *Zakupka) GetDocumentInfo(id string, inc int) ([]Document, error) {
 			}
 			if check.Length() >= 5 {
 				rowtr.Find("td").EachWithBreak(func(indextd int, rowtd *goquery.Selection) bool {
-
 					indextd = indextd + correct
 					switch indextd {
 					case 0:
@@ -237,28 +238,74 @@ func (z *Zakupka) GetDocumentInfo(id string, inc int) ([]Document, error) {
 	return documents, nil
 }
 
-func (z *Zakupka) GetProcessInfo(id string) {
-	defer z.Wg.Done()
+func getStagesWithPagination(doc *goquery.Document) (stages []Stage) {
+	doc.Find("table.blockInfo__table").Each(func(i int, table *goquery.Selection) {
+		var stage Stage
+		var flagCostCompleted bool
+		var flagDocument bool
+		var flagPenalty bool
+		table.Find("tr.tableBlock__row").EachWithBreak(func(i int, tr *goquery.Selection) bool {
+			if tr.Find("td").Text() == "" {
+				return true
+			}
+			tr.Find("span.general-chevron-handler").Each(func(index int, chevronhtml *goquery.Selection) {
+				if typeDocument, ok := chevronhtml.Attr("data-content-id"); ok {
+					if strings.Contains(typeDocument, "execution") {
+						if url, ok := chevronhtml.Attr("data-url"); ok {
+							stage.URL = &url
+						}
+					}
+				}
+			})
+			tr.Find("td.tableBlock__col.tableBlock__col_center").Each(func(index int, datehtml *goquery.Selection) {
+				var flag bool
+				stageSplit := strings.Split(replacer(replaceArray, datehtml.Text()), "-")
+				if len(stageSplit) > 1 {
+					flag = true
+					ts, _ := convertTime(ParseDate(stageSplit[0]))
+					stage.DateStart = MyTime{ts}
+					te, _ := convertTime(ParseDate(stageSplit[1]))
+					stage.DateEnd = MyTime{te}
 
-	var stages []Stage
-	var penaltyInfos []PenaltyInfo
-	url := "https://zakupki.gov.ru/epz/contract/contractCard/process-info.html?reestrNumber=" + id
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
-	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := z.requestRepeat(req, id)
-	if err != nil {
-		z.saveError(err)
-		return
-	}
-	defer resp.Body.Close()
-	//data_b, err := ioutil.ReadAll(resp.Body)
-	//z.log.Info(string(data_b))
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		z.saveError(fmt.Errorf("ошибка чтения HTML: %s", err.Error()))
-		return
-	}
+				}
+				stageSplitFrom := strings.Split(replacer(replaceArray, datehtml.Text()), "По ")
+				if len(stageSplitFrom) > 1 && !flag {
+					ts, _ := convertTime(ParseDate(stageSplitFrom[1]))
+					stage.DateEnd = MyTime{ts}
+				}
+				stageSplitTo := strings.Split(replacer(replaceArray, datehtml.Text()), "От ")
+				if len(stageSplitTo) > 1 && !flag {
+					ts, _ := convertTime(ParseDate(stageSplitTo[1]))
+					stage.DateStart = MyTime{ts}
+				}
+			})
+			tr.Find("td.tableBlock__col.tableBlock__col_right").Each(func(index int, costhtml *goquery.Selection) {
+				if !flagCostCompleted {
+					stage.CostCompleted = SumToFloat((strings.Trim(replacer(replaceArray, costhtml.Text()), " ")))
+					flagCostCompleted = true
+				}
+				stage.CostPaid = SumToFloat((strings.Trim(replacer(replaceArray, costhtml.Text()), " ")))
+			})
+			tr.Find("td.tableBlock__col.tableBlock__col_first").Each(func(index int, penaltyhtml *goquery.Selection) {
+				if !flagDocument {
+					flagDocument = true
+				} else {
+					if flagPenalty {
+						flagPenalty = true
+						stage.Penalty = strings.Trim(replacer(replaceArray, penaltyhtml.Text()), " ")
+					}
+					stage.Completed = strings.Trim(replacer(replaceArray, penaltyhtml.Text()), " ")
+
+				}
+			})
+			stages = append(stages, stage)
+			return true
+		})
+	})
+	return
+}
+
+func getStages(doc *goquery.Document) (stages []Stage) {
 	doc.Find("table.blockInfo__table").Each(func(i int, s *goquery.Selection) {
 		s.Find("td.tableBlock__col").EachWithBreak(func(indextr int, rowhtml *goquery.Selection) bool {
 			if (rowhtml.Index() >= 0) && len(rowhtml.Get(0).Attr) >= 0 {
@@ -313,9 +360,105 @@ func (z *Zakupka) GetProcessInfo(id string) {
 				}
 			}
 			return true
-
 		})
 	})
+
+	return stages
+}
+
+// проверка на возможную пагинацию этапов,зависит от закупки, получение колл-во страниц
+func getPages(doc *goquery.Document) (pages []string) {
+	doc.Find("li.page").Each(func(i int, s *goquery.Selection) {
+		s.Find("span.link-text").Each(func(i int, page *goquery.Selection) {
+			pages = append(pages, page.Text())
+		})
+	})
+	return
+}
+
+// получение колл-ва записей на странице
+func getPageSize(doc *goquery.Document) (pageSize string) {
+	doc.Find("div.select.select-text.select-record-per-page--number").Each(func(i int, pSize *goquery.Selection) {
+		pageSize = pSize.Text()
+	})
+	return
+}
+
+// получение информационнного ID контракта
+func getСontractInfoID(doc *goquery.Document) (contractInfoID string) {
+	doc.Find("a").EachWithBreak(func(i int, s *goquery.Selection) bool {
+		band, ok := s.Attr("href")
+		if ok {
+			if strings.Contains(band, "contractInfoId") {
+				s := strings.Split(band, "&")
+				for _, value := range s {
+					s1 := strings.Split(value, "=")
+					if len(s1) > 0 {
+						if s1[0] == "contractInfoId" {
+							contractInfoID = s1[1]
+							return false
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return contractInfoID
+}
+
+// получение дополнительных стадий,если использовалась пагинация
+func (z *Zakupka) GetPaginateStages(page, pageSize, contractInfoId string) (stages []Stage) {
+	url := "https://zakupki.gov.ru/epz/contract/contractCard/contract-execution.html?reestrNumber=" + z.ID + "&contractInfoId=" + contractInfoId + "&page=" + page + "&pageSize=" + pageSize
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := z.requestRepeat(req, z.ID)
+	if err != nil {
+		z.saveError(err)
+		return
+	}
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		z.saveError(fmt.Errorf("ошибка чтения HTML: %s", err.Error()))
+		return
+	}
+	stages = append(stages, getStagesWithPagination(doc)...)
+	return
+}
+
+func (z *Zakupka) GetProcessInfo() {
+	defer z.Wg.Done()
+	var penaltyInfos []PenaltyInfo
+	url := "https://zakupki.gov.ru/epz/contract/contractCard/process-info.html?reestrNumber=" + z.ID
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := z.requestRepeat(req, z.ID)
+	if err != nil {
+		z.saveError(err)
+		return
+	}
+	// data_b, err := ioutil.ReadAll(resp.Body)
+	// z.log.Info(string(data_b))
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		z.saveError(fmt.Errorf("ошибка чтения HTML: %s", err.Error()))
+		return
+	}
+
+	stages := getStages(doc)
+
+	pages := getPages(doc)
+	if len(pages) > 0 {
+		pageSize := getPageSize(doc)
+		contractInfoId := getСontractInfoID(doc)
+		for i := 1; i < len(pages); i++ {
+			stagesWithPagination := z.GetPaginateStages(pages[i], pageSize, contractInfoId)
+			stages = append(stages, stagesWithPagination...)
+		}
+	}
+
 	doc.Find("table.table").Each(func(i int, s *goquery.Selection) {
 		s.Find("tr").Each(func(indextr int, rowtr *goquery.Selection) {
 			var penaltyInfo PenaltyInfo
@@ -353,10 +496,10 @@ func (z *Zakupka) GetProcessInfo(id string) {
 						z.log.Error(err)
 						continue
 					}
-					//z.log.Warnf("url %s документ %s", *value.URL, document)
+					// z.log.Warnf("url %s документ %s", *value.URL, document)
 					stages[key].Document = append(stages[key].Document, document...)
-					//fmt.Println("счетчик", i)
-					//fmt.Println("колл-во", len(document))
+					// fmt.Println("счетчик", i)
+					// fmt.Println("колл-во", len(document))
 					if len(document) < 50 {
 						break
 					}
@@ -372,19 +515,20 @@ func (z *Zakupka) GetProcessInfo(id string) {
 		z.PenaltyInfo = penaltyInfos
 		z.Mutex.Unlock()
 	}
+	return
 }
 
-func (z *Zakupka) GetCommonInfo(id string) {
+func (z *Zakupka) GetCommonInfo() {
 	var numberContract, dateContract, dataEndContract, fullName, shortName, inn, kpp, registrationDate, reesterNumberContract, identificationCodePurchase, dateStartContract, subjectContract, stateContract, okpo string
 	var dopnik []string
 	var subWorkers []SubWorker
 	var indexCountry, indexRegistrationAddress, indexPostalAddress, indexPhoneEmail int = 10, 10, 10, 10
 	defer z.Wg.Done()
-	url := "https://zakupki.gov.ru/epz/contract/contractCard/common-info.html?reestrNumber=" + id
+	url := "https://zakupki.gov.ru/epz/contract/contractCard/common-info.html?reestrNumber=" + z.ID
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := z.requestRepeat(req, id)
+	resp, err := z.requestRepeat(req, z.ID)
 	if err != nil {
 		z.saveError(err)
 		return
@@ -556,7 +700,6 @@ func (z *Zakupka) GetCommonInfo(id string) {
 						}
 					}
 				}
-
 			})
 		})
 		subWorkers = append(subWorkers, subWorker)
@@ -595,19 +738,19 @@ func (z *Zakupka) saveError(err error) {
 	z.Mutex.Unlock()
 }
 
-func (z *Zakupka) GetPaymentInfo(id string) {
+func (z *Zakupka) GetPaymentInfo() {
 	reDigit := regexp.MustCompile("[0-9]+")
 	reLetter := regexp.MustCompile("[а-яА-ЯёЁa-zA-Z]")
-	var replaceArray = []string{"  ", "\n", "№", "₽", ",", "на", "год", " ", "Этап:"}
-	var replaceSum = []string{"  ", "₽", " ", " ", "\n"}
-	var sum = NewPayment()
+	replaceArray := []string{"  ", "\n", "№", "₽", ",", "на", "год", " ", "Этап:"}
+	replaceSum := []string{"  ", "₽", " ", " ", "\n"}
+	sum := NewPayment()
 
 	defer z.Wg.Done()
-	url := "https://zakupki.gov.ru/epz/contract/contractCard/payment-info-and-target-of-order.html?reestrNumber=" + id
+	url := "https://zakupki.gov.ru/epz/contract/contractCard/payment-info-and-target-of-order.html?reestrNumber=" + z.ID
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
 	req.Header.Set("Content-Encoding", "gzip")
-	resp, err := z.requestRepeat(req, id)
+	resp, err := z.requestRepeat(req, z.ID)
 	if err != nil {
 		z.saveError(err)
 		return
@@ -662,14 +805,14 @@ func (z *Zakupka) RequestEpz(id string) {
 	}
 	z.ID = id
 	z.Wg.Add(3)
-	go z.GetCommonInfo(id)
-	go z.GetPaymentInfo(id)
-	go z.GetProcessInfo(id)
+	go z.GetCommonInfo()
+	go z.GetPaymentInfo()
+	go z.GetProcessInfo()
 	z.Wg.Wait()
 }
 
 func (p *PaymentByYear) ToMap() map[int64]float64 {
-	var m = make(map[int64]float64)
+	m := make(map[int64]float64)
 	for _, value := range p.Payment {
 		m[value.Year] = value.Paid
 	}
@@ -722,9 +865,8 @@ func YearToInt(origin string) int64 {
 }
 
 func PhoneNumberToInternationFormat(s string) (string, bool) {
-
 	s = ParseNum(s) // выделяем цифры
-	var number = []rune(s)
+	number := []rune(s)
 	if len(number) == 0 {
 		return s, false
 	}
@@ -778,7 +920,7 @@ func ParseNum(s string) (str string) {
 			nLen++
 		}
 	}
-	var n = make([]int, 0, nLen)
+	n := make([]int, 0, nLen)
 	for i := 0; i < len(s); i++ {
 		if b := s[i]; '0' <= b && b <= '9' {
 			n = append(n, int(b)-'0')
