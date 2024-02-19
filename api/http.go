@@ -630,7 +630,8 @@ func (z *Zakupka) GetCommonInfo() {
 				if indextd == 0 {
 					if !trSubWorkers.Is("br") {
 						text, _ := tdSubWorkers.Html()
-						strArrayWithBr := strings.Split(text, "\n")
+						textBeforeSection := strings.Split(text, "<section")
+						strArrayWithBr := strings.Split(textBeforeSection[0], "\n")
 						if len(strArrayWithBr) > 1 {
 							for _, value := range strArrayWithBr {
 								if strings.Contains(value, "<br/>") {
