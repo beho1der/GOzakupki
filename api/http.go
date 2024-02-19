@@ -33,6 +33,7 @@ type Zakupka struct {
 	DateContract               MyTime            `json:"dateContract,omitempty"`
 	Stages                     []Stage           `json:"stages"`
 	DateStartContract          MyTime            `json:"dateStartContract,omitempty"`
+	TerminationDate            MyTime            `json:"terminationDate,omitempty"`
 	PenaltyInfo                []PenaltyInfo     `json:"penaltyInfo"`
 	Dopnik                     []string          `json:"dopnik"`
 	SubWorkers                 []SubWorker       `json:"subWorkers"`
@@ -430,6 +431,8 @@ func (z *Zakupka) GetPaginateStages(page, pageSize, contractInfoId string) (stag
 func (z *Zakupka) GetProcessInfo() {
 	defer z.Wg.Done()
 	var penaltyInfos []PenaltyInfo
+	var terminationDate string
+
 	url := "https://zakupki.gov.ru/epz/contract/contractCard/process-info.html?reestrNumber=" + z.ID
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
@@ -487,6 +490,15 @@ func (z *Zakupka) GetProcessInfo() {
 			})
 		})
 	})
+	// поиск даты расторжения контракта
+	doc.Find("section.blockInfo__section.section").EachWithBreak(func(i int, section *goquery.Selection) bool {
+		text := section.Find("span.section__title").Text()
+		if text == "Дата расторжения контракта" {
+			terminationDate = strings.TrimSpace(section.Find("span.section__info").Text())
+			return false
+		}
+		return true
+	})
 	if len(stages) > 0 {
 		for key, value := range stages {
 			for i := 0; i < 40; i++ {
@@ -515,6 +527,10 @@ func (z *Zakupka) GetProcessInfo() {
 		z.PenaltyInfo = penaltyInfos
 		z.Mutex.Unlock()
 	}
+	z.Mutex.Lock()
+	ttd, _ := convertTime(terminationDate)
+	z.TerminationDate = MyTime{ttd}
+	z.Mutex.Unlock()
 	return
 }
 
