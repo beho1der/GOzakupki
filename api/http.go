@@ -538,8 +538,7 @@ func (z *Zakupka) GetCommonInfo() {
 	var numberContract, dateContract, dataEndContract, fullName, shortName, inn, kpp, registrationDate, reesterNumberContract, identificationCodePurchase, dateStartContract, subjectContract, stateContract, okpo string
 	var dopnik []string
 	var subWorkers []SubWorker
-	replaceArrayWithoutNumber := []string{"  ", "\n", "₽", ",", "на", "год", " ", "Этап:"}
-
+	replaceArrayWithoutNumber := []string{"  ", "\n", "₽", " ", "<br>"}
 	var indexCountry, indexRegistrationAddress, indexPostalAddress, indexPhoneEmail int = 10, 10, 10, 10
 	defer z.Wg.Done()
 	url := "https://zakupki.gov.ru/epz/contract/contractCard/common-info.html?reestrNumber=" + z.ID
