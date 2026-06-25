@@ -1,9 +1,9 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
-	//"io/ioutil"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -11,10 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"GOzakupki/config"
+
 	"github.com/PuerkitoBio/goquery"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/sirupsen/logrus"
-	//"fmt"
-	//"bytes"
 )
 
 type MyTime struct {
@@ -35,6 +37,7 @@ type Zakupka struct {
 	DateStartContract          MyTime            `json:"dateStartContract,omitempty"`
 	TerminationDate            MyTime            `json:"terminationDate,omitempty"`
 	PenaltyInfo                []PenaltyInfo     `json:"penaltyInfo"`
+	File                       []FileLink        `json:"file"`
 	Dopnik                     []string          `json:"dopnik"`
 	SubWorkers                 []SubWorker       `json:"subWorkers"`
 	SumContract                float64           `json:"sumContract"`
@@ -46,6 +49,8 @@ type Zakupka struct {
 	client                     *http.Client      `json:"-"`
 	repeatCount                int               `json:"-"`
 	timeout                    int               `json:"-"`
+	minioClient                *minio.Client     `json:"-"`
+	s3Config                   config.S3Config   `json:"-"`
 }
 
 type Customer struct {
@@ -107,27 +112,21 @@ type PaymentByYear struct {
 	Payment map[int]Payment
 }
 
+type FileLink struct {
+	URL      string `json:"url"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	S3Bucket string `json:"s3Bucket,omitempty"`
+	S3Key    string `json:"s3Key,omitempty"`
+	S3ETag   string `json:"s3ETag,omitempty"`
+}
+
 func (t *MyTime) MarshalJSON() ([]byte, error) {
 	if t.IsZero() {
 		return []byte("null"), nil
 	}
 	return []byte(t.Format("\"" + time.RFC3339 + "\"")), nil
 }
-
-// UnmarshalJSON implements the json.Unmarshaler interface.
-// The time is expected to be a quoted string in RFC 3339 format.
-/*func (t *MyTime) UnmarshalJSON(data []byte) (err error) {
-
-	// by convention, unmarshalers implement UnmarshalJSON([]byte("null")) as a no-op.
-	if bytes.Equal(data, []byte("null")) {
-		return nil
-	}
-
-	// Fractional seconds are handled implicitly by Parse.
-	tt, err := time.Parse("\""+time.RFC3339+"\"", string(data))
-	*t = MyTime{&tt}
-	return
-}*/
 
 var (
 	replaceArray  = []string{"«Дополнительное соглашение к контракту»", "  ", "\n", "№", "₽", " ", "<br>"}
@@ -138,7 +137,7 @@ var tr = &http.Transport{
 	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 }
 
-func New(l *logrus.Logger, timeout, repeat int) *Zakupka {
+func New(l *logrus.Logger, timeout, repeat int, cfg *config.Config) *Zakupka {
 	if timeout == 0 {
 		timeout = 30
 	}
@@ -147,13 +146,30 @@ func New(l *logrus.Logger, timeout, repeat int) *Zakupka {
 		repeat = 1
 	}
 
-	return &Zakupka{
+	z := &Zakupka{
 		log:         l,
 		SumByYear:   make(map[int64]float64),
 		timeout:     timeout,
 		repeatCount: repeat,
 		client:      generateHttpClientWithTimeout(timeout),
+		s3Config:    cfg.S3,
 	}
+
+	if cfg.S3.Endpoint != "" && cfg.S3.Bucket != "" {
+		minioOpts := &minio.Options{
+			Creds:  credentials.NewStaticV4(cfg.S3.AccessKey, cfg.S3.SecretKey, ""),
+			Region: cfg.S3.Region,
+			Secure: cfg.S3.UseSSL,
+		}
+		mc, err := minio.New(cfg.S3.Endpoint, minioOpts)
+		if err != nil {
+			l.Errorf("ошибка подключения к S3: %v", err)
+		} else {
+			z.minioClient = mc
+		}
+	}
+
+	return z
 }
 
 func generateHttpClientWithTimeout(timeout int) *http.Client {
@@ -176,7 +192,7 @@ func (z *Zakupka) requestRepeat(req *http.Request, id string) (resp *http.Respon
 		// data_b, err := ioutil.ReadAll(resp.Body)
 		// e.log.Info(string(data_b))
 		if resp.StatusCode != 200 {
-			err = fmt.Errorf("статус выполнения запроса: %d код ошибки %s", resp.StatusCode, resp.Status)
+			err = fmt.Errorf("статус выполнения запроса: %d код ошибки: %s ссылка: %s", resp.StatusCode, resp.Status, req.URL)
 			time.Sleep(time.Duration(z.timeout))
 			continue
 		}
@@ -816,17 +832,104 @@ func (z *Zakupka) GetPaymentInfo() {
 	return
 }
 
-func (z *Zakupka) RequestEpz(id string) {
+func (z *Zakupka) GetFileLinks() {
+	var fileLinks []FileLink
+	r := regexp.MustCompile("\\s+")
+	filePrefix := "filestore"
+	defer z.Wg.Done()
+	url := "https://zakupki.gov.ru/epz/contract/contractCard/document-info.html?reestrNumber=" + z.ID
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Content-Type", "text/html;charset=UTF-8")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := z.requestRepeat(req, z.ID)
+	if err != nil {
+		z.saveError(err)
+		return
+	}
+	defer resp.Body.Close()
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		z.saveError(fmt.Errorf("ошибка чтения HTML: %s", err.Error()))
+		return
+	}
+
+	doc.Find("a").Each(func(i int, s *goquery.Selection) {
+		href, ok := s.Attr("href")
+		if !ok {
+			return
+		}
+		title, ok := s.Attr("title")
+		if !ok {
+			return
+		}
+		lowerHref := strings.ToLower(href)
+		if strings.Contains(lowerHref, filePrefix) || strings.HasSuffix(lowerHref, filePrefix) {
+			fullURL := href
+			if !strings.HasPrefix(href, "http") {
+				fullURL = "https://zakupki.gov.ru" + href
+			}
+			name := strings.Trim(strings.Replace(r.ReplaceAllString(title, " "), "\n", " ", -1), " ")
+			if name == "" {
+				name = href
+			}
+			sizeStr := ExtractFromBrackets(title)
+			cleanName := strings.Trim(strings.Replace(name, "("+sizeStr+")", "", -1), " ")
+			fileLinks = append(fileLinks, FileLink{URL: fullURL, Name: cleanName, Size: ParseSizeToBytes(sizeStr)})
+		}
+	})
+
+	z.Mutex.Lock()
+	z.File = fileLinks
+	z.Mutex.Unlock()
+	return
+}
+
+func (z *Zakupka) downloadFiles() {
+	if z.minioClient == nil {
+		return
+	}
+	for i := range z.File {
+		f := &z.File[i]
+		req, err := http.NewRequest("GET", f.URL, nil)
+		if err != nil {
+			z.log.Errorf("ошибка создания запроса для %s: %v", f.Name, err)
+			continue
+		}
+		resp, err := z.requestRepeat(req, z.ID)
+		if err != nil {
+			z.log.Errorf("ошибка скачивания файла %s: %v", f.Name, err)
+			continue
+		}
+		s3Key := z.ID + "/" + f.Name
+		info, err := z.minioClient.PutObject(context.Background(), z.s3Config.Bucket, s3Key, resp.Body, resp.ContentLength, minio.PutObjectOptions{})
+		resp.Body.Close()
+		if err != nil {
+			z.log.Errorf("ошибка загрузки файла %s в S3: %v", f.Name, err)
+			continue
+		}
+		f.S3Bucket = z.s3Config.Bucket
+		f.S3Key = s3Key
+		f.S3ETag = info.ETag
+		z.log.Infof("файл загружен в S3: %s/%s", z.s3Config.Bucket, s3Key)
+	}
+}
+
+func (z *Zakupka) RequestEpz(id string, fileDownload bool) {
 	if id == "" {
 		z.saveError(fmt.Errorf("пустой идентификационный номер госзакупки"))
 		return
 	}
 	z.ID = id
-	z.Wg.Add(3)
+	z.Wg.Add(4)
 	go z.GetCommonInfo()
 	go z.GetPaymentInfo()
 	go z.GetProcessInfo()
+	go z.GetFileLinks()
 	z.Wg.Wait()
+
+	if fileDownload && len(z.File) > 0 {
+		z.downloadFiles()
+	}
 }
 
 func (p *PaymentByYear) ToMap() map[int64]float64 {
@@ -948,6 +1051,39 @@ func ParseNum(s string) (str string) {
 		str = str + strconv.Itoa(value)
 	}
 	return
+}
+
+func ExtractFromBrackets(s string) string {
+	start := strings.LastIndex(s, "(")
+	end := strings.LastIndex(s, ")")
+	if start != -1 && end != -1 && end > start {
+		return s[start+1 : end]
+	}
+	return ""
+}
+
+func ParseSizeToBytes(s string) int64 {
+	s = strings.TrimSpace(s)
+	s = strings.Replace(s, ",", ".", -1)
+	re := regexp.MustCompile(`[\d.]+`)
+	numStr := re.FindString(s)
+	if numStr == "" {
+		return 0
+	}
+	num, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0
+	}
+	if strings.Contains(s, "Кб") || strings.Contains(s, "KB") {
+		return int64(num * 1024)
+	}
+	if strings.Contains(s, "Мб") || strings.Contains(s, "MB") {
+		return int64(num * 1024 * 1024)
+	}
+	if strings.Contains(s, "Гб") || strings.Contains(s, "GB") {
+		return int64(num * 1024 * 1024 * 1024)
+	}
+	return int64(num)
 }
 
 func ParseDate(s string) (str string) {

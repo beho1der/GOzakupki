@@ -17,10 +17,20 @@ type MainServerConfig struct {
 	ProxyUrl string
 }
 
+type S3Config struct {
+	Endpoint  string
+	Region    string
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	UseSSL    bool
+}
+
 type Config struct {
 	Timers        TimersConfig
 	LogLevel      logrus.Level
 	Main          MainServerConfig
+	S3            S3Config
 	Port          string
 	KeepaliveTime float64
 	TimeWait      float64
@@ -38,6 +48,14 @@ func New() *Config {
 		Main: MainServerConfig{
 			Proxy:    getEnvAsBool("PROXY_ENABLE", false),
 			ProxyUrl: getEnv("PROXY_URL", ""),
+		},
+		S3: S3Config{
+			Endpoint:  getEnv("S3_ENDPOINT", ""),
+			Region:    getEnv("S3_REGION", "us-east-1"),
+			AccessKey: getEnv("S3_ACCESS_KEY", ""),
+			SecretKey: getEnv("S3_SECRET_KEY", ""),
+			Bucket:    getEnv("S3_BUCKET", ""),
+			UseSSL:    getEnvAsBool("S3_USE_SSL", true),
 		},
 		LogLevel:      getEnvAsLogger("LOG_LEVEL", "info"),
 		Port:          getEnv("PORT", "8025"),

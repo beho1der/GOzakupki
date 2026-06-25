@@ -1,12 +1,13 @@
 package main
 
 import (
-	"GOzakupki/api"
-	"GOzakupki/config"
 	"crypto/tls"
 	"net/http"
 	"net/url"
 	"time"
+
+	"GOzakupki/api"
+	"GOzakupki/config"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -39,12 +40,12 @@ func init() {
 		}
 	}
 
-	log.Info("версия 0.5.6")
+	log.Info("версия 0.6.6")
 }
 
 func main() {
 	router := mux.NewRouter()
-	router.Handle("/api/get", api.GetContractCard(log)).Methods("POST", "OPTIONS")
+	router.Handle("/api/get", api.GetContractCard(log, conf)).Methods("POST", "OPTIONS")
 	router.Handle("/api/loglevel", api.ChangeLogLevelHandler(log)).Methods("POST", "OPTIONS")
 
 	gzipHandler := handlers.CompressHandler(router)

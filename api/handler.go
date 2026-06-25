@@ -2,15 +2,19 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"net/http"
+
+	"GOzakupki/config"
+
+	"github.com/sirupsen/logrus"
 )
 
 type MessageIn struct {
-	ID          string `json:"id"`
-	Timeout     int    `json:"timeout"`
-	RepeatCount int    `json:"repeat"`
+	ID             string `json:"id"`
+	Timeout        int    `json:"timeout"`
+	RepeatCount    int    `json:"repeat"`
+	FileDownload   bool   `json:"fileDownload"`
 }
 
 type Message struct {
@@ -20,7 +24,7 @@ type Message struct {
 	LogLevel string   `json:"logLevel,omitempty"`
 }
 
-func GetContractCard(log *logrus.Logger) http.Handler {
+func GetContractCard(log *logrus.Logger, cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var msg MessageIn
 		w.Header().Set("Content-Type", "application/json")
@@ -30,8 +34,8 @@ func GetContractCard(log *logrus.Logger) http.Handler {
 			w.Write(send)
 			return
 		}
-		var zakupka = New(log, msg.Timeout, msg.RepeatCount)
-		zakupka.RequestEpz(msg.ID)
+		var zakupka = New(log, msg.Timeout, msg.RepeatCount, cfg)
+		zakupka.RequestEpz(msg.ID, msg.FileDownload)
 		if zakupka.Error != "" {
 			send, _ := json.Marshal(Message{Message: zakupka.Error, Status: false, Zakupka: zakupka})
 			w.Write(send)
