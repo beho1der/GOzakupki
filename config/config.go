@@ -1,11 +1,12 @@
 package config
 
 import (
-	"github.com/sirupsen/logrus"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 type TimersConfig struct {
@@ -54,7 +55,7 @@ func New() *Config {
 			Region:    getEnv("S3_REGION", "us-east-1"),
 			AccessKey: getEnv("S3_ACCESS_KEY", ""),
 			SecretKey: getEnv("S3_SECRET_KEY", ""),
-			Bucket:    getEnv("S3_BUCKET", ""),
+			Bucket:    getEnv("S3_BUCKET", "gozakupki"),
 			UseSSL:    getEnvAsBool("S3_USE_SSL", true),
 		},
 		LogLevel:      getEnvAsLogger("LOG_LEVEL", "info"),
@@ -128,7 +129,7 @@ func getEnvAsSlice(name string, defaultVal []string, sep string) []string {
 
 // Преобразование в справочник
 func getEnvAsMap(name string, defaultVal map[string]string, sep string) map[string]string {
-	var m = make(map[string]string)
+	m := make(map[string]string)
 	valStr := getEnv(name, "")
 	if valStr == "" {
 		return defaultVal
