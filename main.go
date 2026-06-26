@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/url"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/sirupsen/logrus"
 )
 
@@ -40,7 +43,34 @@ func init() {
 		}
 	}
 
-	log.Info("версия 0.6.6")
+	if conf.S3.Endpoint != "" && conf.S3.Bucket != "" {
+		minioOpts := &minio.Options{
+			Creds:  credentials.NewStaticV4(conf.S3.AccessKey, conf.S3.SecretKey, ""),
+			Region: conf.S3.Region,
+			Secure: conf.S3.UseSSL,
+		}
+		mc, err := minio.New(conf.S3.Endpoint, minioOpts)
+		if err != nil {
+			log.Errorf("ошибка подключения к S3: %v", err)
+		} else {
+			exists, err := mc.BucketExists(context.Background(), conf.S3.Bucket)
+			if err != nil {
+				log.Errorf("ошибка проверки bucket %s: %v", conf.S3.Bucket, err)
+			}
+			if !exists {
+				err = mc.MakeBucket(context.Background(), conf.S3.Bucket, minio.MakeBucketOptions{Region: conf.S3.Region})
+				if err != nil {
+					log.Errorf("ошибка создания bucket %s: %v", conf.S3.Bucket, err)
+				} else {
+					log.Infof("bucket %s создан", conf.S3.Bucket)
+				}
+			} else {
+				log.Infof("bucket %s существует", conf.S3.Bucket)
+			}
+		}
+	}
+
+	log.Info("версия 0.6.7")
 }
 
 func main() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -874,6 +875,9 @@ func (z *Zakupka) GetFileLinks() {
 			}
 			sizeStr := ExtractFromBrackets(title)
 			cleanName := strings.Trim(strings.Replace(name, "("+sizeStr+")", "", -1), " ")
+			if !isHumanReadableOrArchive(cleanName) {
+				return
+			}
 			fileLinks = append(fileLinks, FileLink{URL: fullURL, Name: cleanName, Size: ParseSizeToBytes(sizeStr)})
 		}
 	})
@@ -1115,4 +1119,22 @@ func ParseDate(s string) (str string) {
 	}
 
 	return n
+}
+
+func isHumanReadableOrArchive(name string) bool {
+	lower := strings.ToLower(name)
+	archiveExts := []string{".zip", ".rar", ".7z", ".tar", ".gz", ".tar.gz", ".tgz", ".bz2", ".xz"}
+	docExts := []string{".pdf", ".doc", ".docx", ".xls", ".xlsx", ".odt", ".ods", ".rtf", ".txt", ".csv", ".png", ".jpg", ".jpeg", ".tiff", ".tif"}
+	archiveExts = append(archiveExts, docExts...)
+	hasKnownExt := false
+	for _, ext := range archiveExts {
+		if strings.HasSuffix(lower, ext) {
+			hasKnownExt = true
+			break
+		}
+	}
+	if hasKnownExt {
+		return true
+	}
+	return false
 }
