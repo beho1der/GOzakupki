@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -894,6 +893,17 @@ func (z *Zakupka) downloadFiles() {
 	}
 	for i := range z.File {
 		f := &z.File[i]
+		s3Key := z.ID + "/" + f.Name
+		exists, err := z.FileExistsInS3(s3Key)
+		if err != nil {
+			z.log.Errorf("ошибка проверки файла %s в S3: %v", f.Name, err)
+		}
+		if exists {
+			z.log.Infof("файл уже существует в S3, пропускаем: %s/%s", z.s3Config.Bucket, s3Key)
+			f.S3Bucket = z.s3Config.Bucket
+			f.S3Key = s3Key
+			continue
+		}
 		req, err := http.NewRequest("GET", f.URL, nil)
 		if err != nil {
 			z.log.Errorf("ошибка создания запроса для %s: %v", f.Name, err)
@@ -904,7 +914,6 @@ func (z *Zakupka) downloadFiles() {
 			z.log.Errorf("ошибка скачивания файла %s: %v", f.Name, err)
 			continue
 		}
-		s3Key := z.ID + "/" + f.Name
 		info, err := z.minioClient.PutObject(context.Background(), z.s3Config.Bucket, s3Key, resp.Body, resp.ContentLength, minio.PutObjectOptions{})
 		resp.Body.Close()
 		if err != nil {
@@ -916,6 +925,20 @@ func (z *Zakupka) downloadFiles() {
 		f.S3ETag = info.ETag
 		z.log.Infof("файл загружен в S3: %s/%s", z.s3Config.Bucket, s3Key)
 	}
+}
+
+func (z *Zakupka) FileExistsInS3(key string) (bool, error) {
+	if z.minioClient == nil {
+		return false, fmt.Errorf("MinIO клиент не инициализирован")
+	}
+	_, err := z.minioClient.StatObject(context.Background(), z.s3Config.Bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return false, nil
+		}
+		return false, fmt.Errorf("ошибка проверки объекта %s в S3: %w", key, err)
+	}
+	return true, nil
 }
 
 func (z *Zakupka) RequestEpz(id string, fileDownload bool) {
