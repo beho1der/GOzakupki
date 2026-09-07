@@ -598,7 +598,9 @@ func (z *Zakupka) GetCommonInfo() {
 			shortName = s.Find("span.section__info").Text()
 		}
 		if strings.Contains(s.Find("span.section__title").Text(), "ИНН") {
+			if inn == "" {
 			inn = strings.TrimSpace(s.Find("span.section__info").Text())
+			}
 		}
 		if strings.Contains(s.Find("span.section__title").Text(), "КПП") {
 			kpp = strings.TrimSpace(s.Find("span.section__info").Text())
