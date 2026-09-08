@@ -603,7 +603,9 @@ func (z *Zakupka) GetCommonInfo() {
 			}
 		}
 		if strings.Contains(s.Find("span.section__title").Text(), "КПП") {
+			if kpp == "" {
 			kpp = strings.TrimSpace(s.Find("span.section__info").Text())
+			}
 		}
 		if strings.Contains(s.Find("span.section__title").Text(), "Код ОКПО") {
 			okpo = s.Find("span.section__info").Text()
